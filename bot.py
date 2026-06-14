@@ -256,6 +256,14 @@ def human_move_and_click(x, y, button="left", duration=None):
     pyautogui.click(button=button)
 
 
+def human_right_click(x, y, duration=None):
+    human_move_and_click(x, y, button="right", duration=duration)
+
+
+def human_left_click(x, y, duration=None):
+    human_move_and_click(x, y, button="left", duration=duration)
+
+
 def activate_window(config):
     window = config.get("window_rect")
     title = config.get("window_title")
@@ -322,7 +330,7 @@ def press_space():
 def click_bait(config):
     bait = config["bait_point"]
     print(f"Cliccare esca in {bait['x']}, {bait['y']}")
-    human_move_and_click(bait["x"], bait["y"], button="right")
+    human_right_click(bait["x"], bait["y"])
 
 
 def get_fishing_roi(config):
