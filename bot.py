@@ -26,7 +26,7 @@ BAIT_TEMPLATE = os.path.join(TEMPLATES_DIR, "bait_icon.png")
 FISH_TEMPLATE = os.path.join(TEMPLATES_DIR, "fishing_window.png")
 DEFAULT_CONFIG = {
     "window_title": "Metin2",
-    "use_window_detection": True,
+    "use_window_detection": False,
     "bait_point": {"x": 0, "y": 0},
     "fishing_roi": {"left": 0, "top": 0, "width": 320, "height": 320},
     "dark_threshold": 100,
@@ -225,22 +225,30 @@ def human_move_and_click(x, y, button="left", duration=None):
     target_x = x + jitter_x
     target_y = y + jitter_y
     if directinput is not None:
-        directinput.moveTo(target_x, target_y, duration=duration)
-        human_sleep(0.05, 0.18)
-        directinput.click(button=button)
-    else:
-        pyautogui.moveTo(target_x, target_y, duration=duration)
-        human_sleep(0.05, 0.18)
-        pyautogui.click(button=button)
+        try:
+            directinput.moveTo(target_x, target_y, duration=duration)
+            human_sleep(0.05, 0.18)
+            directinput.click(button=button)
+            return
+        except Exception:
+            pass
+    pyautogui.moveTo(target_x, target_y, duration=duration)
+    human_sleep(0.05, 0.18)
+    pyautogui.click(button=button)
 
 
 def activate_window(config):
     window = config.get("window_rect")
-    if not window:
-        return False
+    title = config.get("window_title")
     if gw is not None:
         for win in gw.getAllWindows():
-            if win.left == window["left"] and win.top == window["top"] and win.width == window["width"] and win.height == window["height"]:
+            if title and title.lower() in win.title.lower():
+                try:
+                    win.activate()
+                    return True
+                except Exception:
+                    pass
+            if window and win.left == window["left"] and win.top == window["top"] and win.width == window["width"] and win.height == window["height"]:
                 try:
                     win.activate()
                     return True
@@ -252,8 +260,11 @@ def activate_window(config):
 
             def enum_windows(hwnd, results):
                 if win32gui.IsWindowVisible(hwnd):
+                    title_text = win32gui.GetWindowText(hwnd)
                     left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-                    if left == window["left"] and top == window["top"] and right - left == window["width"] and bottom - top == window["height"]:
+                    if title and title.lower() in title_text.lower():
+                        results.append(hwnd)
+                    elif window and left == window["left"] and top == window["top"] and right - left == window["width"] and bottom - top == window["height"]:
                         results.append(hwnd)
 
             results = []
@@ -280,10 +291,6 @@ def click_bait(config):
 
 
 def get_fishing_roi(config):
-    if config.get("use_window_detection", False):
-        roi = detect_fishing_roi(config)
-        if roi:
-            config["fishing_roi"] = roi
     roi = config.get("fishing_roi", {})
     return roi
 
@@ -353,10 +360,12 @@ def validate_config(config):
 
 
 def run_bot(config, rounds):
+    if config.get("use_window_detection", False) and not config.get("window_rect"):
+        if not setup_auto_config(config):
+            print("Impossibile rilevare la finestra Metin2 automaticamente. Assicurati che il gioco sia aperto e visibile.")
+            sys.exit(1)
     validate_config(config)
     print("Avvio bot pesca automatico. Assicurati che Metin2 sia in primo piano.")
-    if config.get("use_window_detection", False):
-        setup_auto_config(config)
 
     for round_index in range(1, rounds + 1):
         print(f"\n=== Round {round_index}/{rounds} ===")
@@ -408,6 +417,7 @@ def main():
 
     if args.calibrate:
         config = DEFAULT_CONFIG.copy()
+        config["use_window_detection"] = False
         print("Calibrazione dell'esca:")
         config["bait_point"] = prompt_point("Posiziona il mouse sull'icona dell'esca e premi Invio.")
         config["fishing_roi"] = prompt_roi()
@@ -418,6 +428,7 @@ def main():
 
     if args.auto:
         config = DEFAULT_CONFIG.copy()
+        config["use_window_detection"] = True
         success = setup_auto_config(config)
         if not success:
             print("Impossibile rilevare la finestra Metin2 automaticamente. Assicurati che il gioco sia aperto e visibile.")
