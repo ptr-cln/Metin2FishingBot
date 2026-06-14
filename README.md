@@ -38,13 +38,13 @@ Segui le istruzioni sullo schermo per:
 Questa operazione salva le coordinate in `config.json`.
 
 ## Modalità automatica
-Se vuoi provare a eliminare la calibrazione manuale, usa:
+Se vuoi eliminare la calibrazione manuale, usa:
 
 ```bash
 python bot.py --auto
 ```
 
-Questo cerca automaticamente la finestra di Metin2 aperta, calcola una posizione di esca di default e tenta di rilevare l'area della finestra di pesca.
+Questo cerca automaticamente la finestra di Metin2 aperta, calcola una posizione di esca di default e tenta di rilevare l'area della finestra di pesca. Il comando configurerà e avvierà il bot.
 
 ## Uso
 Dopo la calibrazione o la configurazione automatica, avvia il bot con:

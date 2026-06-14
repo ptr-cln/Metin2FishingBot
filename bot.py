@@ -222,9 +222,46 @@ def human_move_and_click(x, y, button="left", duration=None):
     jitter_y = random.randint(-5, 5)
     target_x = x + jitter_x
     target_y = y + jitter_y
-    pyautogui.moveTo(target_x, target_y, duration=duration)
-    human_sleep(0.05, 0.18)
-    pyautogui.click(button=button)
+    if directinput is not None:
+        directinput.moveTo(target_x, target_y, duration=duration)
+        human_sleep(0.05, 0.18)
+        directinput.click(button=button)
+    else:
+        pyautogui.moveTo(target_x, target_y, duration=duration)
+        human_sleep(0.05, 0.18)
+        pyautogui.click(button=button)
+
+
+def activate_window(config):
+    window = config.get("window_rect")
+    if not window:
+        return False
+    if gw is not None:
+        for win in gw.getAllWindows():
+            if win.left == window["left"] and win.top == window["top"] and win.width == window["width"] and win.height == window["height"]:
+                try:
+                    win.activate()
+                    return True
+                except Exception:
+                    pass
+    if platform.system() == "Windows":
+        try:
+            import win32gui
+
+            def enum_windows(hwnd, results):
+                if win32gui.IsWindowVisible(hwnd):
+                    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                    if left == window["left"] and top == window["top"] and right - left == window["width"] and bottom - top == window["height"]:
+                        results.append(hwnd)
+
+            results = []
+            win32gui.EnumWindows(enum_windows, results)
+            if results:
+                win32gui.SetForegroundWindow(results[0])
+                return True
+        except ImportError:
+            pass
+    return False
 
 
 def press_space():
@@ -316,8 +353,13 @@ def validate_config(config):
 def run_bot(config, rounds):
     validate_config(config)
     print("Avvio bot pesca automatico. Assicurati che Metin2 sia in primo piano.")
+    if config.get("use_window_detection", False):
+        setup_auto_config(config)
+
     for round_index in range(1, rounds + 1):
         print(f"\n=== Round {round_index}/{rounds} ===")
+        if activate_window(config):
+            human_sleep(0.3, 0.6)
         click_bait(config)
         human_sleep(0.6, 1.1)
 
@@ -379,6 +421,8 @@ def main():
             print("Impossibile rilevare la finestra Metin2 automaticamente. Assicurati che il gioco sia aperto e visibile.")
             sys.exit(1)
         save_config(config)
+        print("Configurazione automatica salvata. Avvio il bot ora.")
+        run_bot(config, args.rounds)
         return
 
     if args.show_config:
