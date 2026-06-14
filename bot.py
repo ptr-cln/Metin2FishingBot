@@ -74,14 +74,29 @@ def find_metin2_window(title=None, process_name=None):
         if windows:
             win = windows[0]
             return {"left": win.left, "top": win.top, "width": win.width, "height": win.height}
+        if process_name:
+            try:
+                import win32process
+                import psutil
+                for win in gw.getAllWindows():
+                    if win.width <= 0 or win.height <= 0:
+                        continue
+                    try:
+                        _, pid = win32process.GetWindowThreadProcessId(win._hWnd)
+                        proc = psutil.Process(pid)
+                        if proc.name().lower() == process_name.lower():
+                            return {"left": win.left, "top": win.top, "width": win.width, "height": win.height}
+                    except Exception:
+                        pass
+            except ImportError:
+                pass
 
     if platform.system() == "Windows":
         try:
+            import win32con
             import win32gui
             import win32process
             import psutil
-
-            target_process = process_name
 
             def enum_windows(hwnd, result):
                 if not win32gui.IsWindowVisible(hwnd):
@@ -91,11 +106,11 @@ def find_metin2_window(title=None, process_name=None):
                 if title.lower() in title_text.lower():
                     result.append({"left": left, "top": top, "width": right - left, "height": bottom - top})
                     return
-                if target_process:
+                if process_name:
                     _, pid = win32process.GetWindowThreadProcessId(hwnd)
                     try:
                         proc = psutil.Process(pid)
-                        if proc.name().lower() == target_process.lower():
+                        if proc.name().lower() == process_name.lower():
                             result.append({"left": left, "top": top, "width": right - left, "height": bottom - top})
                             return
                     except Exception:
@@ -283,9 +298,30 @@ def activate_window(config):
                     return True
                 except Exception:
                     pass
+        if process_name:
+            try:
+                import win32process
+                import psutil
+                for win in gw.getAllWindows():
+                    if win.width <= 0 or win.height <= 0:
+                        continue
+                    try:
+                        _, pid = win32process.GetWindowThreadProcessId(win._hWnd)
+                        proc = psutil.Process(pid)
+                        if proc.name().lower() == process_name.lower():
+                            try:
+                                win.activate()
+                                return True
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except ImportError:
+                pass
 
     if platform.system() == "Windows":
         try:
+            import win32con
             import win32gui
             import win32process
             import psutil
@@ -298,25 +334,36 @@ def activate_window(config):
                 if title and title.lower() in title_text.lower():
                     results.append(hwnd)
                     return
-                if target_process := process_name:
+                if process_name:
                     _, pid = win32process.GetWindowThreadProcessId(hwnd)
                     try:
                         proc = psutil.Process(pid)
-                        if proc.name().lower() == target_process.lower():
+                        if proc.name().lower() == process_name.lower():
                             results.append(hwnd)
                             return
                     except Exception:
                         pass
-                elif window and left == window["left"] and top == window["top"] and right - left == window["width"] and bottom - top == window["height"]:
+                if window and left == window["left"] and top == window["top"] and right - left == window["width"] and bottom - top == window["height"]:
                     results.append(hwnd)
 
             results = []
             win32gui.EnumWindows(enum_windows, results)
             if results:
-                win32gui.SetForegroundWindow(results[0])
+                handle = results[0]
+                win32gui.ShowWindow(handle, win32con.SW_RESTORE)
+                win32gui.SetForegroundWindow(handle)
                 return True
         except ImportError:
             pass
+    return False
+
+
+def ensure_active_window(config, retries=3):
+    for attempt in range(retries):
+        if activate_window(config):
+            human_sleep(0.2, 0.5)
+            return True
+        human_sleep(0.4, 0.8)
     return False
 
 
@@ -328,6 +375,8 @@ def press_space():
 
 
 def click_bait(config):
+    if not ensure_active_window(config):
+        print("Attenzione: non sono riuscito a mettere Metin2 in primo piano prima di cliccare l'esca.")
     bait = config["bait_point"]
     print(f"Cliccare esca in {bait['x']}, {bait['y']}")
     human_right_click(bait["x"], bait["y"])
