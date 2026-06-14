@@ -25,7 +25,8 @@ TEMPLATES_DIR = "templates"
 BAIT_TEMPLATE = os.path.join(TEMPLATES_DIR, "bait_icon.png")
 FISH_TEMPLATE = os.path.join(TEMPLATES_DIR, "fishing_window.png")
 DEFAULT_CONFIG = {
-    "window_title": "Metin2",
+    "window_title": "METIN2",
+    "window_process_name": "metin2client",
     "use_window_detection": False,
     "bait_point": {"x": 0, "y": 0},
     "fishing_roi": {"left": 0, "top": 0, "width": 320, "height": 320},
@@ -62,9 +63,11 @@ def human_sleep(min_seconds=0.15, max_seconds=0.4):
     time.sleep(delay)
 
 
-def find_metin2_window(title=None):
+def find_metin2_window(title=None, process_name=None):
     if title is None:
         title = DEFAULT_CONFIG["window_title"]
+    if process_name is None:
+        process_name = DEFAULT_CONFIG.get("window_process_name")
 
     if gw is not None:
         windows = [win for win in gw.getAllWindows() if title.lower() in win.title.lower() and win.width > 0 and win.height > 0]
@@ -75,12 +78,28 @@ def find_metin2_window(title=None):
     if platform.system() == "Windows":
         try:
             import win32gui
+            import win32process
+            import psutil
+
+            target_process = process_name
 
             def enum_windows(hwnd, result):
+                if not win32gui.IsWindowVisible(hwnd):
+                    return
+                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
                 title_text = win32gui.GetWindowText(hwnd)
-                if title.lower() in title_text.lower() and win32gui.IsWindowVisible(hwnd):
-                    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                if title.lower() in title_text.lower():
                     result.append({"left": left, "top": top, "width": right - left, "height": bottom - top})
+                    return
+                if target_process:
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    try:
+                        proc = psutil.Process(pid)
+                        if proc.name().lower() == target_process.lower():
+                            result.append({"left": left, "top": top, "width": right - left, "height": bottom - top})
+                            return
+                    except Exception:
+                        pass
 
             results = []
             win32gui.EnumWindows(enum_windows, results)
@@ -240,6 +259,8 @@ def human_move_and_click(x, y, button="left", duration=None):
 def activate_window(config):
     window = config.get("window_rect")
     title = config.get("window_title")
+    process_name = config.get("window_process_name")
+
     if gw is not None:
         for win in gw.getAllWindows():
             if title and title.lower() in win.title.lower():
@@ -254,18 +275,32 @@ def activate_window(config):
                     return True
                 except Exception:
                     pass
+
     if platform.system() == "Windows":
         try:
             import win32gui
+            import win32process
+            import psutil
 
             def enum_windows(hwnd, results):
-                if win32gui.IsWindowVisible(hwnd):
-                    title_text = win32gui.GetWindowText(hwnd)
-                    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-                    if title and title.lower() in title_text.lower():
-                        results.append(hwnd)
-                    elif window and left == window["left"] and top == window["top"] and right - left == window["width"] and bottom - top == window["height"]:
-                        results.append(hwnd)
+                if not win32gui.IsWindowVisible(hwnd):
+                    return
+                title_text = win32gui.GetWindowText(hwnd)
+                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                if title and title.lower() in title_text.lower():
+                    results.append(hwnd)
+                    return
+                if target_process := process_name:
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    try:
+                        proc = psutil.Process(pid)
+                        if proc.name().lower() == target_process.lower():
+                            results.append(hwnd)
+                            return
+                    except Exception:
+                        pass
+                elif window and left == window["left"] and top == window["top"] and right - left == window["width"] and bottom - top == window["height"]:
+                    results.append(hwnd)
 
             results = []
             win32gui.EnumWindows(enum_windows, results)
@@ -340,6 +375,15 @@ def is_fishing_window_open(config):
     return mean_s > 40 and 80 <= mean_h <= 140 and mean_v > 60
 
 
+def wait_for_fishing_window(config, timeout=10):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if is_fishing_window_open(config):
+            return True
+        human_sleep(0.2, 0.5)
+    return False
+
+
 def click_fish(config, fish_point):
     roi = config["fishing_roi"]
     x = roi["left"] + fish_point[0]
@@ -369,13 +413,20 @@ def run_bot(config, rounds):
 
     for round_index in range(1, rounds + 1):
         print(f"\n=== Round {round_index}/{rounds} ===")
-        if activate_window(config):
-            human_sleep(0.3, 0.6)
+        if not activate_window(config):
+            print("Attenzione: non sono riuscito a portare Metin2 in primo piano.")
+        human_sleep(0.3, 0.6)
         click_bait(config)
         human_sleep(0.6, 1.1)
 
+        if not activate_window(config):
+            print("Attenzione: non sono riuscito a portare Metin2 in primo piano prima di premere spazio.")
         press_space()
-        human_sleep(1.2, 1.8)
+        human_sleep(0.6, 0.9)
+
+        if not wait_for_fishing_window(config, timeout=10):
+            print("Attenzione: la finestra di pesca non è apparsa. Riprovare il round.")
+            continue
 
         click_count = 0
         timeout = time.time() + 90
