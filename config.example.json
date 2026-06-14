@@ -1,0 +1,14 @@
+{
+  "bait_point": {
+    "x": 0,
+    "y": 0
+  },
+  "fishing_roi": {
+    "left": 0,
+    "top": 0,
+    "width": 320,
+    "height": 320
+  },
+  "dark_threshold": 100,
+  "min_fish_area": 160
+}
