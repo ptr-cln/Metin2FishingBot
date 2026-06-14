@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import platform
 import random
 import sys
 import time
@@ -10,12 +11,22 @@ import numpy as np
 import pyautogui
 
 try:
+    import pygetwindow as gw
+except ImportError:
+    gw = None
+
+try:
     import pydirectinput as directinput
 except ImportError:
     directinput = None
 
 CONFIG_PATH = "config.json"
+TEMPLATES_DIR = "templates"
+BAIT_TEMPLATE = os.path.join(TEMPLATES_DIR, "bait_icon.png")
+FISH_TEMPLATE = os.path.join(TEMPLATES_DIR, "fishing_window.png")
 DEFAULT_CONFIG = {
+    "window_title": "Metin2",
+    "use_window_detection": True,
     "bait_point": {"x": 0, "y": 0},
     "fishing_roi": {"left": 0, "top": 0, "width": 320, "height": 320},
     "dark_threshold": 100,
@@ -49,6 +60,132 @@ def save_config(config):
 def human_sleep(min_seconds=0.15, max_seconds=0.4):
     delay = random.uniform(min_seconds, max_seconds)
     time.sleep(delay)
+
+
+def find_metin2_window(title=None):
+    if title is None:
+        title = DEFAULT_CONFIG["window_title"]
+
+    if gw is not None:
+        windows = [win for win in gw.getAllWindows() if title.lower() in win.title.lower() and win.width > 0 and win.height > 0]
+        if windows:
+            win = windows[0]
+            return {"left": win.left, "top": win.top, "width": win.width, "height": win.height}
+
+    if platform.system() == "Windows":
+        try:
+            import win32gui
+
+            def enum_windows(hwnd, result):
+                title_text = win32gui.GetWindowText(hwnd)
+                if title.lower() in title_text.lower() and win32gui.IsWindowVisible(hwnd):
+                    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+                    result.append({"left": left, "top": top, "width": right - left, "height": bottom - top})
+
+            results = []
+            win32gui.EnumWindows(enum_windows, results)
+            if results:
+                return results[0]
+        except ImportError:
+            pass
+
+    return None
+
+
+def capture_window(config):
+    window = config.get("window_rect")
+    if window and window["width"] > 0 and window["height"] > 0:
+        screenshot = pyautogui.screenshot(region=(window["left"], window["top"], window["width"], window["height"]))
+    else:
+        screenshot = pyautogui.screenshot()
+    return cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+
+def match_template(frame, template_path, threshold=0.78):
+    if not os.path.exists(template_path):
+        return None
+    template = cv2.imread(template_path, cv2.IMREAD_UNCHANGED)
+    if template is None:
+        return None
+    if template.shape[2] == 4:
+        template = cv2.cvtColor(template, cv2.COLOR_BGRA2BGR)
+
+    result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+    if max_val >= threshold:
+        h, w = template.shape[:2]
+        return max_loc[0] + w // 2, max_loc[1] + h // 2
+    return None
+
+
+def default_bait_point(window):
+    return {
+        "x": window["left"] + int(window["width"] * 0.88),
+        "y": window["top"] + int(window["height"] * 0.55),
+    }
+
+
+def default_fishing_roi(window):
+    left = window["left"] + int(window["width"] * 0.18)
+    top = window["top"] + int(window["height"] * 0.14)
+    width = int(window["width"] * 0.50)
+    height = int(window["height"] * 0.48)
+    return {"left": left, "top": top, "width": width, "height": height}
+
+
+def detect_fishing_roi(config):
+    window = config.get("window_rect")
+    if not window:
+        return config.get("fishing_roi")
+
+    frame = capture_window(config)
+    match = match_template(frame, FISH_TEMPLATE, threshold=0.70)
+    if match is not None:
+        x, y = match
+        w, h = 320, 320
+        return {"left": window["left"] + x - w // 2, "top": window["top"] + y - h // 2, "width": w, "height": h}
+
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (85, 40, 50), (135, 255, 255))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return config.get("fishing_roi")
+
+    best = max(contours, key=cv2.contourArea)
+    x, y, w, h = cv2.boundingRect(best)
+    x = max(0, x - 20)
+    y = max(0, y - 20)
+    w = min(window["width"] - x, w + 40)
+    h = min(window["height"] - y, h + 40)
+    return {"left": window["left"] + x, "top": window["top"] + y, "width": w, "height": h}
+
+
+def find_bait_point(config):
+    window = config.get("window_rect")
+    if not window:
+        return config.get("bait_point")
+
+    frame = capture_window(config)
+    start_x = int(window["width"] * 0.70)
+    region = frame[int(window["height"] * 0.25) : int(window["height"] * 0.70), start_x:window["width"]]
+    match = match_template(region, BAIT_TEMPLATE, threshold=0.75)
+    if match is not None:
+        x, y = match
+        return {"x": window["left"] + start_x + x, "y": window["top"] + int(window["height"] * 0.25) + y}
+
+    return default_bait_point(window)
+
+
+def setup_auto_config(config):
+    window = find_metin2_window(config.get("window_title"))
+    if not window:
+        return False
+    config["window_rect"] = window
+    config["bait_point"] = find_bait_point(config)
+    config["fishing_roi"] = detect_fishing_roi(config)
+    return True
 
 
 def prompt_point(message):
@@ -103,8 +240,17 @@ def click_bait(config):
     human_move_and_click(bait["x"], bait["y"], button="right")
 
 
+def get_fishing_roi(config):
+    if config.get("use_window_detection", False):
+        roi = detect_fishing_roi(config)
+        if roi:
+            config["fishing_roi"] = roi
+    roi = config.get("fishing_roi", {})
+    return roi
+
+
 def capture_roi(config):
-    roi = config["fishing_roi"]
+    roi = get_fishing_roi(config)
     screenshot = pyautogui.screenshot(region=(roi["left"], roi["top"], roi["width"], roi["height"]))
     frame = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
     return frame
@@ -138,6 +284,16 @@ def find_fish_shadow(config):
     return center_x, center_y
 
 
+def is_fishing_window_open(config):
+    frame = capture_roi(config)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+    mean_h = np.mean(h)
+    mean_s = np.mean(s)
+    mean_v = np.mean(v)
+    return mean_s > 40 and 80 <= mean_h <= 140 and mean_v > 60
+
+
 def click_fish(config, fish_point):
     roi = config["fishing_roi"]
     x = roi["left"] + fish_point[0]
@@ -150,10 +306,10 @@ def validate_config(config):
     bait = config.get("bait_point", {})
     roi = config.get("fishing_roi", {})
     if bait.get("x", 0) <= 0 or bait.get("y", 0) <= 0:
-        print("Coordinate esca non valide nel config. Esegui --calibrate.")
+        print("Coordinate esca non valide nel config. Esegui --calibrate o --auto.")
         sys.exit(1)
     if roi.get("width", 0) < 120 or roi.get("height", 0) < 120:
-        print("Area pesca non valida nel config. Esegui --calibrate.")
+        print("Area pesca non valida nel config. Esegui --calibrate o --auto.")
         sys.exit(1)
 
 
@@ -169,15 +325,19 @@ def run_bot(config, rounds):
         human_sleep(1.2, 1.8)
 
         click_count = 0
-        timeout = time.time() + 25
-        while click_count < 3 and time.time() < timeout:
+        timeout = time.time() + 90
+        while time.time() < timeout:
+            if not is_fishing_window_open(config):
+                print("Finestra pesca chiusa, round terminato.")
+                break
+
             fish_point = find_fish_shadow(config)
             if fish_point is not None:
                 click_fish(config, fish_point)
                 click_count += 1
-                human_sleep(0.35, 0.7)
+                human_sleep(0.9, 1.2)
             else:
-                human_sleep(0.18, 0.3)
+                human_sleep(0.18, 0.4)
 
         if click_count < 3:
             print("Attenzione: non ho trovato tutti i 3 colpi. Riprovare la prossima volta.")
@@ -195,8 +355,9 @@ def create_default_config():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Bot di pesca per Metin2 con calibrazione manuale.")
+    parser = argparse.ArgumentParser(description="Bot di pesca per Metin2 con calibratura manuale e auto-detection.")
     parser.add_argument("--calibrate", action="store_true", help="Configura le coordinate della finestra di pesca e dell'esca.")
+    parser.add_argument("--auto", action="store_true", help="Trova automaticamente Metin2 e l'area di pesca.")
     parser.add_argument("--rounds", type=int, default=10, help="Numero di round di pesca da eseguire.")
     parser.add_argument("--show-config", action="store_true", help="Mostra la configurazione corrente.")
     args = parser.parse_args()
@@ -211,20 +372,31 @@ def main():
         save_config(config)
         return
 
+    if args.auto:
+        config = DEFAULT_CONFIG.copy()
+        success = setup_auto_config(config)
+        if not success:
+            print("Impossibile rilevare la finestra Metin2 automaticamente. Assicurati che il gioco sia aperto e visibile.")
+            sys.exit(1)
+        save_config(config)
+        return
+
     if args.show_config:
         if os.path.exists(CONFIG_PATH):
             with open(CONFIG_PATH, "r", encoding="utf-8") as handle:
                 print(handle.read())
         else:
-            print(f"Nessun config trovato. Crea {CONFIG_PATH} con --calibrate.")
+            print(f"Nessun config trovato. Crea {CONFIG_PATH} con --calibrate o --auto.")
         return
 
     if not os.path.exists(CONFIG_PATH):
         create_default_config()
-        print("Esegui --calibrate prima di avviare il bot.")
+        print("Esegui --calibrate o --auto prima di avviare il bot.")
         sys.exit(1)
 
     config = load_config()
+    if config.get("use_window_detection", False) and not config.get("window_rect"):
+        setup_auto_config(config)
     run_bot(config, args.rounds)
 
 
