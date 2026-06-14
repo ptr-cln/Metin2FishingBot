@@ -159,6 +159,8 @@ def detect_fishing_roi(config):
     y = max(0, y - 20)
     w = min(window["width"] - x, w + 40)
     h = min(window["height"] - y, h + 40)
+    if w < 120 or h < 120:
+        return default_fishing_roi(window)
     return {"left": window["left"] + x, "top": window["top"] + y, "width": w, "height": h}
 
 
@@ -439,8 +441,20 @@ def main():
         sys.exit(1)
 
     config = load_config()
-    if config.get("use_window_detection", False) and not config.get("window_rect"):
-        setup_auto_config(config)
+    if config.get("use_window_detection", False):
+        roi = config.get("fishing_roi", {})
+        bait = config.get("bait_point", {})
+        needs_auto = (
+            not config.get("window_rect")
+            or roi.get("width", 0) < 120
+            or roi.get("height", 0) < 120
+            or bait.get("x", 0) <= 0
+            or bait.get("y", 0) <= 0
+        )
+        if needs_auto:
+            if not setup_auto_config(config):
+                print("Impossibile rigenerare la configurazione automatica. Assicurati che il gioco sia aperto e visibile.")
+                sys.exit(1)
     run_bot(config, args.rounds)
 
 
